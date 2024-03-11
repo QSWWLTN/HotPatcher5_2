@@ -1,0 +1,286 @@
+ .../PackageWriter/HotPatcherPackageWriter.cpp      | 34 +++++++++++--
+ .../Cooker/PackageWriter/HotPatcherPackageWriter.h | 22 +++++++-
+ .../Cook/WorldPartitionCookPackageContext.cpp      | 35 ++++++++++++-
+ .../Cook/WorldPartitionCookPackageContext.h        |  9 +++-
+ .../Private/FlibHotPatcherCoreHelper.cpp           |  2 +-
+ .../Private/FlibShaderPipelineCacheHelper.cpp      | 58 +++++++++++++++++++++-
+ 6 files changed, 151 insertions(+), 9 deletions(-)
+
+diff --git a/HotPatcher/Source/HotPatcherCore/Private/Cooker/PackageWriter/HotPatcherPackageWriter.cpp b/HotPatcher/Source/HotPatcherCore/Private/Cooker/PackageWriter/HotPatcherPackageWriter.cpp
+index 3c3d509..614ebf0 100644
+--- a/HotPatcher/Source/HotPatcherCore/Private/Cooker/PackageWriter/HotPatcherPackageWriter.cpp
++++ b/HotPatcher/Source/HotPatcherCore/Private/Cooker/PackageWriter/HotPatcherPackageWriter.cpp
+@@ -1,4 +1,4 @@
+-
++﻿
+ #include "Cooker/PackageWriter/HotPatcherPackageWriter.h"
+ 
+ #if WITH_PACKAGE_CONTEXT && ENGINE_MAJOR_VERSION > 4
+@@ -9,19 +9,47 @@
+ 
+ void FHotPatcherPackageWriter::Initialize(const FCookInfo& Info){}
+ 
++#if UE_VERSION_OLDER_THAN(5,2,1)
+ void FHotPatcherPackageWriter::AddToExportsSize(int64& ExportsSize)
+ {
+ 	TPackageWriterToSharedBuffer<ICookedPackageWriter>::AddToExportsSize(ExportsSize);
+ }
+ 
++#endif
++
+ void FHotPatcherPackageWriter::BeginPackage(const FBeginPackageInfo& Info)
+ {
+ 	TPackageWriterToSharedBuffer<ICookedPackageWriter>::BeginPackage(Info);
+ }
+ 
+-void FHotPatcherPackageWriter::BeginCook(){}
++#if UE_VERSION_OLDER_THAN(5,2,1)
++void FHotPatcherPackageWriter::BeginCook() {}
++void FHotPatcherPackageWriter::EndCook() {}
++
++#else
++
++void FHotPatcherPackageWriter::BeginCook(const FCookInfo& Info){}
++void FHotPatcherPackageWriter::EndCook(const FCookInfo& Info){}
++
++#endif
++
++#if UE_VERSION_NEWER_THAN(5,1,1)
++
++#include "Serialization/CompactBinaryWriter.h"
++
++int64 FHotPatcherPackageWriter::GetExportsFooterSize() {
++	return sizeof(uint32);
++}
++
++TFuture<FCbObject> FHotPatcherPackageWriter::WriteMPCookMessageForPackage(FName PackageName) {
++	return TFuture<FCbObject>();
++}
++
++bool FHotPatcherPackageWriter::TryReadMPCookMessageForPackage(FName PackageName, FCbObjectView Message) {
++	return false;
++}
+ 
+-void FHotPatcherPackageWriter::EndCook(){}
++#endif
+ 
+ // void FHotPatcherPackageWriter::Flush()
+ // {
+diff --git a/HotPatcher/Source/HotPatcherCore/Private/Cooker/PackageWriter/HotPatcherPackageWriter.h b/HotPatcher/Source/HotPatcherCore/Private/Cooker/PackageWriter/HotPatcherPackageWriter.h
+index 0b28a8c..4380f5c 100644
+--- a/HotPatcher/Source/HotPatcherCore/Private/Cooker/PackageWriter/HotPatcherPackageWriter.h
++++ b/HotPatcher/Source/HotPatcherCore/Private/Cooker/PackageWriter/HotPatcherPackageWriter.h
+@@ -1,10 +1,12 @@
+-#pragma once
++﻿#pragma once
+ #include "CoreMinimal.h"
+ #include "Resources/Version.h"
++#include "misc/EngineVersionComparison.h"
+ 
+ #if WITH_PACKAGE_CONTEXT && ENGINE_MAJOR_VERSION > 4
+ #include "Serialization/PackageWriter.h"
+ #include "PackageWriterToSharedBuffer.h"
++#include "PackageStoreManifest.h"
+ 
+ class FHotPatcherPackageWriter:public TPackageWriterToSharedBuffer<ICookedPackageWriter>
+ {
+@@ -17,11 +19,29 @@ public:
+ 	}
+ 
+ 	virtual void BeginPackage(const FBeginPackageInfo& Info) override;
++
++#if UE_VERSION_OLDER_THAN(5,2,1)
+ 	virtual void AddToExportsSize(int64& ExportsSize) override;
++#endif
++
++
+ 	virtual FDateTime GetPreviousCookTime() const override;
+ 	virtual void Initialize(const FCookInfo& Info) override;
++
++#if UE_VERSION_OLDER_THAN(5,2,1)
+ 	virtual void BeginCook() override;
+ 	virtual void EndCook() override;
++#else
++	virtual void BeginCook(const FCookInfo& Info) override;
++	virtual void EndCook(const FCookInfo& Info) override;
++#endif
++
++#if UE_VERSION_NEWER_THAN(5,1,1)
++	virtual int64 GetExportsFooterSize() override;
++	virtual TFuture<FCbObject> WriteMPCookMessageForPackage(FName PackageName) override;
++	virtual bool TryReadMPCookMessageForPackage(FName PackageName, FCbObjectView Message) override;
++#endif
++
+ 	// virtual void Flush() override;
+ 	virtual TUniquePtr<FAssetRegistryState> LoadPreviousAssetRegistry()override;
+ 	
+diff --git a/HotPatcher/Source/HotPatcherCore/Private/Cooker/PackageWriter/WorldPartition/Cook/WorldPartitionCookPackageContext.cpp b/HotPatcher/Source/HotPatcherCore/Private/Cooker/PackageWriter/WorldPartition/Cook/WorldPartitionCookPackageContext.cpp
+index dec276b..01336d3 100644
+--- a/HotPatcher/Source/HotPatcherCore/Private/Cooker/PackageWriter/WorldPartition/Cook/WorldPartitionCookPackageContext.cpp
++++ b/HotPatcher/Source/HotPatcherCore/Private/Cooker/PackageWriter/WorldPartition/Cook/WorldPartitionCookPackageContext.cpp
+@@ -1,4 +1,4 @@
+-// Copyright Epic Games, Inc. All Rights Reserved.
++﻿// Copyright Epic Games, Inc. All Rights Reserved.
+ #include "WorldPartitionCookPackageContext.h"
+ 
+ #if WITH_EDITOR && !UE_VERSION_OLDER_THAN(5,1,0)
+@@ -6,6 +6,10 @@
+ #include "WorldPartition/WorldPartitionLog.h"
+ #include "WorldPartition/Cook/WorldPartitionCookPackageGenerator.h"
+ 
++#if UE_VERSION_NEWER_THAN(5,1,1)
++#include "WorldPartition/WorldPartitionRuntimeCell.h"
++#endif
++
+ DEFINE_LOG_CATEGORY(LogHotWorldPartition)
+ 
+ FWorldPartitionCookPackageContext::FWorldPartitionCookPackageContext()
+@@ -81,4 +85,33 @@ const FWorldPartitionCookPackage* FWorldPartitionCookPackageContext::AddPackageT
+ 	return nullptr;
+ }
+ 
++#if UE_VERSION_NEWER_THAN(5,1,1)
++bool FWorldPartitionCookPackageContext::GatherPackagesToCook()
++{
++	bool bIsSuccess = true;
++
++	for (IWorldPartitionCookPackageGenerator* CookPackageGenerator : CookPackageGenerators)
++	{
++		if (CookPackageGenerator->GatherPackagesToCook(*this))
++		{
++			if (const TArray<FWorldPartitionCookPackage*>* CookPackages = GetCookPackages(CookPackageGenerator))
++			{
++				for (FWorldPartitionCookPackage* CookPackage : *CookPackages)
++				{
++					if (UWorldPartitionRuntimeCell* Cell = CookPackage ? CookPackageGenerator->GetCellForPackage(*CookPackage) : nullptr)
++					{
++						Cell->SetLevelPackageName(*CookPackage->GetFullGeneratedPath());
++					}
++				}
++			}
++		}
++		else
++		{
++			bIsSuccess = false;
++		}
++	}
++
++	return bIsSuccess;
++}
++#endif
+ #endif
+\ No newline at end of file
+diff --git a/HotPatcher/Source/HotPatcherCore/Private/Cooker/PackageWriter/WorldPartition/Cook/WorldPartitionCookPackageContext.h b/HotPatcher/Source/HotPatcherCore/Private/Cooker/PackageWriter/WorldPartition/Cook/WorldPartitionCookPackageContext.h
+index 2eac3ae..ed8be42 100644
+--- a/HotPatcher/Source/HotPatcherCore/Private/Cooker/PackageWriter/WorldPartition/Cook/WorldPartitionCookPackageContext.h
++++ b/HotPatcher/Source/HotPatcherCore/Private/Cooker/PackageWriter/WorldPartition/Cook/WorldPartitionCookPackageContext.h
+@@ -1,4 +1,4 @@
+-// Copyright Epic Games, Inc. All Rights Reserved.
++﻿// Copyright Epic Games, Inc. All Rights Reserved.
+ 
+ #pragma once
+ #include "CoreMinimal.h"
+@@ -9,7 +9,7 @@
+ #include "WorldPartition/Cook/WorldPartitionCookPackageContextInterface.h"
+ #include "WorldPartition/Cook/WorldPartitionCookPackage.h"
+ 
+-DECLARE_LOG_CATEGORY_EXTERN(LogHotWorldPartition,All,All);
++DECLARE_LOG_CATEGORY_EXTERN(LogHotWorldPartition, All, All);
+ 
+ class IWorldPartitionCookPackageGenerator;
+ 
+@@ -24,6 +24,11 @@ public:
+ 
+ 	virtual const FWorldPartitionCookPackage* AddLevelStreamingPackageToGenerate(IWorldPartitionCookPackageGenerator* CookPackageGenerator, const FString& Root, const FString& RelativePath) override;
+ 	virtual const FWorldPartitionCookPackage* AddGenericPackageToGenerate(IWorldPartitionCookPackageGenerator* CookPackageGenerator, const FString& Root, const FString& RelativePath) override;
++
++#if UE_VERSION_NEWER_THAN(5,1,1)
++	virtual bool GatherPackagesToCook() override;
++#endif
++
+ 	//~ End IWorldPartitionCookPackageContext Interface 
+ 
+ 	const TArray<FWorldPartitionCookPackage*>* GetCookPackages(const IWorldPartitionCookPackageGenerator* CookPackageGenerator) const { return PackagesToCookByGenerator.Find(CookPackageGenerator); }
+diff --git a/HotPatcher/Source/HotPatcherCore/Private/FlibHotPatcherCoreHelper.cpp b/HotPatcher/Source/HotPatcherCore/Private/FlibHotPatcherCoreHelper.cpp
+index 004f341..a954706 100644
+--- a/HotPatcher/Source/HotPatcherCore/Private/FlibHotPatcherCoreHelper.cpp
++++ b/HotPatcher/Source/HotPatcherCore/Private/FlibHotPatcherCoreHelper.cpp
+@@ -1,4 +1,4 @@
+-// Fill out your copyright notice in the Description page of Project Settings.
++﻿// Fill out your copyright notice in the Description page of Project Settings.
+ 
+ #include "FlibHotPatcherCoreHelper.h"
+ #include "HotPatcherLog.h"
+diff --git a/HotPatcher/Source/HotPatcherRuntime/Private/FlibShaderPipelineCacheHelper.cpp b/HotPatcher/Source/HotPatcherRuntime/Private/FlibShaderPipelineCacheHelper.cpp
+index 05e01f4..f146568 100644
+--- a/HotPatcher/Source/HotPatcherRuntime/Private/FlibShaderPipelineCacheHelper.cpp
++++ b/HotPatcher/Source/HotPatcherRuntime/Private/FlibShaderPipelineCacheHelper.cpp
+@@ -1,4 +1,4 @@
+-// Fill out your copyright notice in the Description page of Project Settings.
++﻿// Fill out your copyright notice in the Description page of Project Settings.
+ 
+ 
+ #include "FlibShaderPipelineCacheHelper.h"
+@@ -9,6 +9,62 @@
+ #include "HAL/IConsoleManager.h"
+ #include "Misc/EngineVersionComparison.h"
+ 
++#if UE_VERSION_NEWER_THAN(5,1,1)
++static FName ShaderPlatformToShaderFormatName(EShaderPlatform Platform)
++{
++	switch (Platform)
++	{
++	case SP_PCD3D_SM6:
++		return NAME_PCD3D_SM6;
++	case SP_PCD3D_SM5:
++		return NAME_PCD3D_SM5;
++	case SP_PCD3D_ES3_1:
++		return NAME_PCD3D_ES3_1;
++
++	case SP_OPENGL_PCES3_1:
++		return NAME_GLSL_150_ES31;
++	case SP_OPENGL_ES3_1_ANDROID:
++		return NAME_GLSL_ES3_1_ANDROID;
++
++	case SP_METAL:
++		return NAME_SF_METAL;
++	case SP_METAL_MRT:
++		return NAME_SF_METAL_MRT;
++	case SP_METAL_TVOS:
++		return NAME_SF_METAL_TVOS;
++	case SP_METAL_MRT_TVOS:
++		return NAME_SF_METAL_MRT_TVOS;
++	case SP_METAL_MRT_MAC:
++		return NAME_SF_METAL_MRT_MAC;
++	case SP_METAL_SM5:
++		return NAME_SF_METAL_SM5;
++	case SP_METAL_MACES3_1:
++		return NAME_SF_METAL_MACES3_1;
++	case SP_VULKAN_ES3_1_ANDROID:
++		return NAME_VULKAN_ES3_1_ANDROID;
++	case SP_VULKAN_PCES3_1:
++		return NAME_VULKAN_ES3_1;
++	case SP_VULKAN_SM5:
++		return NAME_VULKAN_SM5;
++	case SP_VULKAN_SM5_ANDROID:
++		return NAME_VULKAN_SM5_ANDROID;
++	case SP_D3D_ES3_1_HOLOLENS:
++		return NAME_D3D_ES3_1_HOLOLENS;
++
++	default:
++		if (FStaticShaderPlatformNames::IsStaticPlatform(Platform))
++		{
++			return FStaticShaderPlatformNames::Get().GetShaderFormat(Platform);
++		}
++		else
++		{
++			checkf(0, TEXT("Unknown EShaderPlatform %d!"), (int32)Platform);
++			return NAME_PCD3D_SM5;
++		}
++}
++}
++#endif
++
+ bool UFlibShaderPipelineCacheHelper::LoadShaderPipelineCache(const FString& Name)
+ {
+ 	UE_LOG(LogHotPatcher,Display,TEXT("Load Shader pipeline cache %s for platform %d"),*Name,*ShaderPlatformToShaderFormatName(GMaxRHIShaderPlatform).ToString());
